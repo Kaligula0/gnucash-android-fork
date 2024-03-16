@@ -45,6 +45,9 @@ public class DisableAnimationsRule implements TestRule {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { // https://stackoverflow.com/a/75837274/2249464
                     String commandOutput = new String(is.readAllBytes());
                     Log.d(DisableAnimationsRule.class.getSimpleName(), commandOutput);
+                } else {
+                    String commandOutput = new String(is.readBytes());
+                    Log.d(DisableAnimationsRule.class.getSimpleName(), commandOutput);
                 }
             }
         }
