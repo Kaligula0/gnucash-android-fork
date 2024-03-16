@@ -18,16 +18,14 @@ package org.gnucash.android.export.csv;
 
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
+import android.support.annotation.NonNull;
 import android.util.Log;
 
-import androidx.annotation.NonNull;
-
-import com.google.firebase.crashlytics.FirebaseCrashlytics;
+import com.crashlytics.android.Crashlytics;
 
 import org.gnucash.android.R;
 import org.gnucash.android.export.ExportParams;
 import org.gnucash.android.export.Exporter;
-import org.gnucash.android.model.Account;
 import org.gnucash.android.model.Split;
 import org.gnucash.android.model.Transaction;
 import org.gnucash.android.model.TransactionType;
@@ -38,7 +36,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
-import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -52,9 +50,9 @@ import java.util.Map;
  */
 public class CsvTransactionsExporter extends Exporter {
 
-    private char mCsvSeparator;
+    private final char mCsvSeparator;
 
-    private DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+    private final DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
 
     /**
      * Construct a new exporter with export parameters
@@ -87,12 +85,12 @@ public class CsvTransactionsExporter extends Exporter {
         try (CsvWriter csvWriter = new CsvWriter(new FileWriter(outputFile), "" + mCsvSeparator)) {
             generateExport(csvWriter);
         } catch (IOException ex) {
-            FirebaseCrashlytics.getInstance().log("Error exporting CSV");
-            FirebaseCrashlytics.getInstance().recordException(ex);
+            Crashlytics.log("Error exporting CSV");
+            Crashlytics.logException(ex);
             throw new ExporterException(mExportParams, ex);
         }
 
-        return Arrays.asList(outputFile);
+        return Collections.singletonList(outputFile);
     }
 
     /**
@@ -100,10 +98,9 @@ public class CsvTransactionsExporter extends Exporter {
      *
      * @param splits Splits to be written
      */
-    private void writeSplitsToCsv(@NonNull List<Split> splits, @NonNull CsvWriter writer) throws IOException {
+    private void writeSplitsToCsv(@NonNull List<Split> splits, @NonNull CsvWriter writer,
+                                  Map<String, String> accountNames, Map<String, String> accountFullNames) throws IOException {
         int index = 0;
-
-        Map<String, Account> uidAccountMap = new HashMap<>();
 
         for (Split split : splits) {
             if (index++ > 0) { // the first split is on the same line as the transactions. But after that, we
@@ -112,18 +109,22 @@ public class CsvTransactionsExporter extends Exporter {
             }
             writer.writeToken(split.getMemo());
 
-            //cache accounts so that we do not have to go to the DB each time
             String accountUID = split.getAccountUID();
-            Account account;
-            if (uidAccountMap.containsKey(accountUID)) {
-                account = uidAccountMap.get(accountUID);
+
+            // Cache account names
+            String fullName, name;
+            if (accountNames.containsKey(accountUID)) {
+                fullName = accountFullNames.get(accountUID);
+                name = accountNames.get(accountUID);
             } else {
-                account = mAccountsDbAdapter.getRecord(accountUID);
-                uidAccountMap.put(accountUID, account);
+                fullName = mAccountsDbAdapter.getAccountFullName(accountUID);
+                name = mAccountsDbAdapter.getAccountName(accountUID);
+                accountFullNames.put(accountUID, fullName);
+                accountNames.put(accountUID, name);
             }
 
-            writer.writeToken(account.getFullName());
-            writer.writeToken(account.getName());
+            writer.writeToken(fullName);
+            writer.writeToken(name);
 
             String sign = split.getType() == TransactionType.CREDIT ? "-" : "";
             writer.writeToken(sign + split.getQuantity().formattedString());
@@ -141,12 +142,14 @@ public class CsvTransactionsExporter extends Exporter {
 
     private void generateExport(final CsvWriter csvWriter) throws ExporterException {
         try {
-            List<String> names = Arrays.asList(mContext.getResources().getStringArray(R.array.csv_transaction_headers));
-            for (int i = 0; i < names.size(); i++) {
-                csvWriter.writeToken(names.get(i));
+            String[] names = mContext.getResources().getStringArray(R.array.csv_transaction_headers);
+            for (int i = 0; i < names.length - 1; i++) {
+                csvWriter.writeToken(names[i]);
             }
-            csvWriter.newLine();
+            csvWriter.writeEndToken(names[names.length - 1]);
 
+            Map<String, String> nameCache = new HashMap<>();
+            Map<String, String> fullNameCache = new HashMap<>();
 
             Cursor cursor = mTransactionsDbAdapter.fetchTransactionsModifiedSince(mExportParams.getExportStartTime());
             Log.d(LOG_TAG, String.format("Exporting %d transactions to CSV", cursor.getCount()));
@@ -163,12 +166,12 @@ public class CsvTransactionsExporter extends Exporter {
                 csvWriter.writeToken("CURRENCY::" + transaction.getCurrencyCode());
                 csvWriter.writeToken(null); // Void Reason
                 csvWriter.writeToken(null); // Action
-                writeSplitsToCsv(transaction.getSplits(), csvWriter);
+                writeSplitsToCsv(transaction.getSplits(), csvWriter, nameCache, fullNameCache);
             }
 
             PreferencesHelper.setLastExportTime(TimestampHelper.getTimestampFromNow());
         } catch (IOException e) {
-            FirebaseCrashlytics.getInstance().recordException(e);
+            Crashlytics.logException(e);
             throw new ExporterException(mExportParams, e);
         }
     }
